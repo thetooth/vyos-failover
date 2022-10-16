@@ -1,0 +1,28 @@
+protocols {
+    failover {
+        route 0.0.0.0 {
+            description 'Balance traffic between two providers'
+            next-hop 192.168.0.1 {
+                check {
+                    target 1.1.1.1
+                    interval 1500ms
+                    rtt-threshold 50ms
+                    loss-threshold 1
+                }
+                interface eth0
+                metric 10
+            }
+            next-hop 192.168.1.1 {
+                check {
+                    target 1.1.0.0
+                    interval 1500ms
+                    rtt-threshold 50ms
+                    loss-threshold 1
+                }
+                interface eth1
+                metric 10
+            }
+        }
+        flap-rate 1s
+    }
+}
