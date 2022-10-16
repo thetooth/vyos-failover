@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/go-ping/ping"
-	"github.com/thetooth/sla/config"
+	"github.com/thetooth/vyos-failover/config"
 )
 
 var (

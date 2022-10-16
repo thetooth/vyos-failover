@@ -1,4 +1,4 @@
-module github.com/thetooth/sla
+module github.com/thetooth/vyos-failover
 
 go 1.19
 
