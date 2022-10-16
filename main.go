@@ -109,18 +109,18 @@ func main() {
 			return
 		case <-statChange: // Update stats everytime a check completes
 			buildStatistics(routes)
-		case <-flap.C:
+		case <-flap.C: // Compute next routing table update
 			for _, route := range routes {
 				route.mu.Lock()
 				availableNexthops := 0
 				arg := fmt.Sprintf("route replace %v proto failover table %v", route.Name, route.Cfg.Table)
 
 				for _, nexthop := range route.Nexthops {
-
 					s := nexthop.Statistics
 
+					// Consider target failed when thresholds exceeded or no packets have been sent due to misconfiguration
 					if s.PacketLoss > nexthop.Cfg.Check.LossThreshold ||
-						s.AvgRtt == 0 || s.AvgRtt > nexthop.Cfg.Check.RTTThreshold.Duration {
+						s.PacketsSent == 0 || s.AvgRtt > nexthop.Cfg.Check.RTTThreshold.Duration {
 						if !nexthop.Failed {
 							fmt.Println("[ TARGET_FAIL ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
 						}
@@ -130,6 +130,10 @@ func main() {
 						if nexthop.Failed {
 							fmt.Println("[ TARGET_SUCCESS ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
 						}
+						nexthop.Failed = false
+
+						// When more than 1 nexthop is given assume the user wants to setup multipathing.
+						// In this case the metric becomes the weight so it's meaning is inverted.
 						if len(route.Nexthops) > 1 {
 							arg += fmt.Sprintf(" nexthop via %v", nexthop.Name)
 							if nexthop.Cfg.Interface != "" {
@@ -143,11 +147,10 @@ func main() {
 							}
 							arg += fmt.Sprintf(" metric %v", nexthop.Cfg.Metric)
 						}
-						nexthop.Failed = false
 					}
 				}
 
-				// Skip usless changes
+				// If no changes occured then skip
 				if arg == route.lastArg {
 					route.mu.Unlock()
 					continue
@@ -158,7 +161,7 @@ func main() {
 					execute("ip", fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table))
 				} else {
 					fmt.Println("[ ROUTE_UPDATE ] route:", route.Name)
-					_, err = execute("ip", arg)
+					_, _, err = execute("ip", arg)
 					// On fault retry, usually means bad parameters from the user but, the link takes time to
 					// settle which can cause a bad gateway message that will be corrected in due time.
 					// Not doing this results in routes being incorrect until the next state change.
@@ -208,9 +211,10 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			if err != nil {
 				panic(err)
 			}
-			pinger.SetLogger(ping.NoopLogger{})
 			newNextHop.Monitor = pinger
-
+			pinger.SetLogger(ping.NoopLogger{})
+			pinger.RecordRtts = false
+			// Needs privileged mode due to VyOS not allowing user mode UDP sockets
 			pinger.SetPrivileged(true)
 			if newNextHop.Cfg.Interface != "" {
 				pinger.Source, err = bindIface(newNextHop.Cfg.Interface, IsIPv6(newNextHop.Cfg.Check.Target))
@@ -219,8 +223,8 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 				}
 			}
 			pinger.Interval = newNextHop.Cfg.Check.Interval.Duration
-			pinger.RecordRtts = false
 
+			// Emit event and collect statistics everytime a packet is sent
 			pinger.OnSend = func(pkt *ping.Packet) {
 				newRoute.mu.Lock()
 				newNextHop.Statistics = *pinger.Statistics()
@@ -303,7 +307,7 @@ func bindIface(ifaceName string, ipv6 bool) (addr string, err error) {
 	if ipv6 {
 		inet = "inet6"
 	}
-	t, err := execute("ip", fmt.Sprintf("--json -f %v addr show %v", inet, ifaceName))
+	t, _, err := execute("ip", fmt.Sprintf("--json -f %v addr show %v", inet, ifaceName))
 	if err != nil {
 		return
 	}
@@ -337,19 +341,15 @@ func IsIPv6(address string) bool {
 	return strings.Count(address, ":") >= 2
 }
 
-func execute(command string, args string) (out string, err error) {
+func execute(command string, args string) (stdout, stderr string, err error) {
 	cmd := exec.Command(command, strings.Split(args, " ")...)
 	var outb, errb bytes.Buffer
 	cmd.Stdout = &outb
 	cmd.Stderr = &errb
 
 	err = cmd.Run()
-	if err != nil {
-		fmt.Println("Bad RC running:", command, args)
-		fmt.Println(errb.String())
-		return
-	}
-	out = outb.String()
+	stdout = outb.String()
+	stderr = errb.String()
 
 	return
 }
