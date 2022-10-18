@@ -12,29 +12,32 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-ping/ping"
+	"github.com/sirupsen/logrus"
 	"github.com/thetooth/vyos-failover/config"
 )
 
 var (
-	path       string
-	statPath   string
-	statChange chan StatEvent
+	debug, trace bool
+	path         string
+	statPath     string
+	statChange   chan StatEvent
 )
 
 type Route struct {
+	mu  *sync.RWMutex
 	Cfg config.Route
 
 	Name string
 
 	Nexthops []*NextHop
-	lastArg  string
-	mu       *sync.RWMutex
+	lastOp   []string
 }
 
 type NextHop struct {
@@ -43,7 +46,11 @@ type NextHop struct {
 	Name       string
 	Statistics ping.Statistics
 	Monitor    *ping.Pinger
-	Failed     bool
+
+	Operational  bool
+	FailCount    int
+	SuccessCount int
+	LastChange   time.Time
 }
 
 type KV struct {
@@ -51,41 +58,24 @@ type KV struct {
 	Value config.NextHop
 }
 
-type StatEvent struct{}
-
-type Statistics []RouteStat
-
-type RouteStat struct {
-	Route        string        `json:"route"`
-	Failed       bool          `json:"failed"`
-	SuccessCount int           `json:"success_count"`
-	FailCount    int           `json:"fail_count"`
-	NextHops     []NextHopStat `json:"next_hops"`
-}
-
-type NextHopStat struct {
-	Gateway string       `json:"gateway"`
-	Check   config.Check `json:"check"`
-
-	PacketsRecv           int             `json:"packets_recv"`
-	PacketsSent           int             `json:"packets_sent"`
-	PacketsRecvDuplicates int             `json:"packets_recv_dup"`
-	PacketLoss            float64         `json:"packet_loss"`
-	MinRtt                config.Interval `json:"min_rtt"`
-	MaxRtt                config.Interval `json:"max_rtt"`
-	AvgRtt                config.Interval `json:"avg_rtt"`
-	StdDevRtt             config.Interval `json:"std_dev_rtt"`
-}
-
 func main() {
+	flag.BoolVar(&debug, "debug", false, "Show additional output")
+	flag.BoolVar(&trace, "trace", false, "Show A LOT of output")
 	flag.StringVar(&path, "config", "/run/vyos-failover.conf", "Path to protocols failover configuration")
 	flag.StringVar(&statPath, "socket", "/tmp/vyos-failover", "Path to statstics socket")
 	flag.Parse()
 
+	if trace {
+		logrus.SetLevel(logrus.TraceLevel)
+		logrus.SetReportCaller(true)
+	} else if debug {
+		logrus.SetLevel(logrus.DebugLevel)
+	}
+
 	// Attempt configuration file load
 	cfg, err := config.Load(path)
 	if err != nil {
-		panic(err)
+		logrus.Panic(err)
 	}
 
 	// Control signals
@@ -100,77 +90,98 @@ func main() {
 	for {
 		select {
 		case <-c: // Clean up and quit
-			for routeName, route := range cfg.Route {
-				fmt.Println("[ EXIT_CLEANUP ] route:", routeName)
-
-				arg := fmt.Sprintf("route del %v proto failover table %v", routeName, route.Table)
-				execute("ip", arg)
-			}
+			execute("ip", "route flush proto failover")
 			return
-		case <-statChange: // Update stats everytime a check completes
+		case <-statChange: // Update stats every time a check completes
 			buildStatistics(routes)
 		case <-flap.C: // Compute next routing table update
 			for _, route := range routes {
 				route.mu.Lock()
 				availableNexthops := 0
-				arg := fmt.Sprintf("route replace %v proto failover table %v", route.Name, route.Cfg.Table)
+				op := []string{}
 
-				for _, nexthop := range route.Nexthops {
+				for nIdx, nexthop := range route.Nexthops {
+					opID := nIdx
+					// When adding a multipath route do it in a single command, opID is always zero and we prefix
+					// with `route replace` on the first hop defined.
+					if route.Cfg.Multipath {
+						if nIdx == 0 {
+							op = append(op, fmt.Sprintf("route replace %v proto failover table %v", route.Name, route.Cfg.Table))
+						}
+						opID = 0
+					} else {
+						op = append(op, fmt.Sprintf("route add %v proto failover table %v", route.Name, route.Cfg.Table))
+					}
+
 					s := nexthop.Statistics
 
 					// Consider target failed when thresholds exceeded or no packets have been sent due to misconfiguration
 					if s.PacketLoss > nexthop.Cfg.Check.LossThreshold ||
 						s.PacketsSent == 0 || s.AvgRtt > nexthop.Cfg.Check.RTTThreshold.Duration {
-						if !nexthop.Failed {
-							fmt.Println("[ TARGET_FAIL ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
+						if nexthop.Operational {
+							logrus.Warn("[ TARGET_FAIL ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
+							nexthop.LastChange = time.Now()
+							nexthop.FailCount++
 						}
-						nexthop.Failed = true
+						nexthop.Operational = false
 					} else {
 						availableNexthops++
-						if nexthop.Failed {
-							fmt.Println("[ TARGET_SUCCESS ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
+						if !nexthop.Operational {
+							logrus.Info("[ TARGET_SUCCESS ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
+							nexthop.LastChange = time.Now()
+							nexthop.SuccessCount++
 						}
-						nexthop.Failed = false
+						nexthop.Operational = true
 
-						// When more than 1 nexthop is given assume the user wants to setup multipathing.
-						// In this case the metric becomes the weight so it's meaning is inverted.
-						if len(route.Nexthops) > 1 {
-							arg += fmt.Sprintf(" nexthop via %v", nexthop.Name)
+						if route.Cfg.Multipath {
+							op[opID] += fmt.Sprintf(" nexthop via %v", nexthop.Name)
 							if nexthop.Cfg.Interface != "" {
-								arg += fmt.Sprintf(" dev %v", nexthop.Cfg.Interface)
+								op[opID] += fmt.Sprintf(" dev %v", nexthop.Cfg.Interface)
 							}
-							arg += fmt.Sprintf(" weight %v", nexthop.Cfg.Metric)
+							op[opID] += fmt.Sprintf(" weight %v", nexthop.Cfg.Weight)
 						} else {
-							arg += fmt.Sprintf(" via %v", nexthop.Name)
+							op[opID] += fmt.Sprintf(" via %v", nexthop.Name)
 							if nexthop.Cfg.Interface != "" {
-								arg += fmt.Sprintf(" dev %v", nexthop.Cfg.Interface)
+								op[opID] += fmt.Sprintf(" dev %v", nexthop.Cfg.Interface)
 							}
-							arg += fmt.Sprintf(" metric %v", nexthop.Cfg.Metric)
+							op[opID] += fmt.Sprintf(" metric %v", nexthop.Cfg.Metric)
 						}
 					}
 				}
 
-				// If no changes occured then skip
-				if arg == route.lastArg {
+				// If no changes occurred then skip
+				if reflect.DeepEqual(op, route.lastOp) {
 					route.mu.Unlock()
 					continue
 				}
 
 				if availableNexthops < 1 {
-					fmt.Println("[ ROUTE_FAIL ] route:", route.Name)
-					execute("ip", fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table))
+					logrus.Warn("[ ROUTE_FAIL ] route:", route.Name)
+					_, stderr, err := execute("ip", fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table))
+					if err != nil {
+						logrus.Error("Failed to destroy route, check configuration for errors")
+						logrus.Debug(stderr)
+					}
 				} else {
-					fmt.Println("[ ROUTE_UPDATE ] route:", route.Name)
-					_, _, err = execute("ip", arg)
-					// On fault retry, usually means bad parameters from the user but, the link takes time to
-					// settle which can cause a bad gateway message that will be corrected in due time.
-					// Not doing this results in routes being incorrect until the next state change.
+					logrus.Info("[ ROUTE_UPDATE ] route:", route.Name)
+					for _, arg := range op {
+						_, stderr, err := execute("ip", arg)
+						// On fault retry, usually means bad parameters from the user but, the link takes time to
+						// settle which can cause a bad gateway message that will be corrected in due time.
+						// Not doing this results in routes being incorrect until the next state change.
+						if err != nil {
+							logrus.Error("Failed to update route, check configuration for errors")
+							logrus.Debug(stderr)
+							break
+						}
+					}
+
 					if err != nil {
 						route.mu.Unlock()
 						continue
 					}
 				}
-				route.lastArg = arg
+				route.lastOp = op
 
 				route.mu.Unlock()
 			}
@@ -209,7 +220,7 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			// Setup monitor
 			pinger, err := ping.NewPinger(newNextHop.Cfg.Check.Target)
 			if err != nil {
-				panic(err)
+				logrus.Panic(err)
 			}
 			newNextHop.Monitor = pinger
 			pinger.SetLogger(ping.NoopLogger{})
@@ -219,12 +230,12 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			if newNextHop.Cfg.Interface != "" {
 				pinger.Source, err = bindIface(newNextHop.Cfg.Interface, IsIPv6(newNextHop.Cfg.Check.Target))
 				if err != nil {
-					panic(err)
+					logrus.Panic(err)
 				}
 			}
 			pinger.Interval = newNextHop.Cfg.Check.Interval.Duration
 
-			// Emit event and collect statistics everytime a packet is sent
+			// Emit event and collect statistics every time a packet is sent
 			pinger.OnSend = func(pkt *ping.Packet) {
 				newRoute.mu.Lock()
 				newNextHop.Statistics = *pinger.Statistics()
@@ -235,7 +246,7 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			go func() {
 				err = pinger.Run()
 				if err != nil {
-					panic(err)
+					logrus.Panic(err)
 				}
 			}()
 
@@ -248,11 +259,42 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 	return
 }
 
+type StatEvent struct{}
+
+type Statistics []RouteStat
+
+type RouteStat struct {
+	Route       string        `json:"route"`
+	Operational bool          `json:"operational"`
+	Multipath   bool          `json:"multipath"`
+	NextHops    []NextHopStat `json:"next_hops"`
+}
+
+type NextHopStat struct {
+	Gateway string       `json:"gateway"`
+	Check   config.Check `json:"check"`
+
+	Operational  bool      `json:"operational"`
+	LastChange   time.Time `json:"last_change"`
+	FailCount    int       `json:"fail_count"`
+	SuccessCount int       `json:"success_count"`
+
+	PacketsRecv           int             `json:"packets_recv"`
+	PacketsSent           int             `json:"packets_sent"`
+	PacketsRecvDuplicates int             `json:"packets_recv_dup"`
+	PacketLoss            float64         `json:"packet_loss"`
+	MinRtt                config.Interval `json:"min_rtt"`
+	MaxRtt                config.Interval `json:"max_rtt"`
+	AvgRtt                config.Interval `json:"avg_rtt"`
+	StdDevRtt             config.Interval `json:"std_dev_rtt"`
+}
+
 func buildStatistics(routes []*Route) (stats Statistics) {
 	for _, route := range routes {
 		route.mu.RLock()
 		s := RouteStat{
-			Route: route.Name,
+			Route:     route.Name,
+			Multipath: route.Cfg.Multipath,
 		}
 
 		var totalFailures int
@@ -266,6 +308,11 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 				Gateway: nexthop.Name,
 				Check:   *nexthop.Cfg.Check,
 
+				Operational:  nexthop.Operational,
+				LastChange:   nexthop.LastChange,
+				SuccessCount: nexthop.SuccessCount,
+				FailCount:    nexthop.FailCount,
+
 				PacketsRecv:           nexthop.Statistics.PacketsRecv,
 				PacketsSent:           nexthop.Statistics.PacketsSent,
 				PacketsRecvDuplicates: nexthop.Statistics.PacketsRecvDuplicates,
@@ -275,17 +322,14 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 				AvgRtt:                config.Interval{Duration: nexthop.Statistics.AvgRtt},
 				StdDevRtt:             config.Interval{Duration: nexthop.Statistics.StdDevRtt},
 			}
-			if nexthop.Failed {
-				s.FailCount++
+			if !nexthop.Operational {
 				totalFailures++
-			} else {
-				s.SuccessCount++
 			}
 			s.NextHops = append(s.NextHops, n)
 		}
 
-		if totalFailures >= len(route.Nexthops) {
-			s.Failed = true
+		if totalFailures < len(route.Nexthops) {
+			s.Operational = true
 		}
 		route.mu.RUnlock()
 
@@ -294,7 +338,7 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 
 	b, err := json.Marshal(stats)
 	if err != nil {
-		panic(err)
+		logrus.Panic(err)
 	}
 
 	ioutil.WriteFile(statPath, b, 0644)
@@ -342,6 +386,8 @@ func IsIPv6(address string) bool {
 }
 
 func execute(command string, args string) (stdout, stderr string, err error) {
+	logrus.Tracef("EXEC: %v %v", command, args)
+
 	cmd := exec.Command(command, strings.Split(args, " ")...)
 	var outb, errb bytes.Buffer
 	cmd.Stdout = &outb

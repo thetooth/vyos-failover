@@ -26,14 +26,16 @@ type Config struct {
 }
 
 type Route struct {
-	Table   string             `json:"table"`
-	VRF     string             `json:"vrf"`
-	NextHop map[string]NextHop `json:"next_hop"`
+	Table     string             `json:"table"`
+	VRF       string             `json:"vrf"`
+	Multipath bool               `json:"multipath"`
+	NextHop   map[string]NextHop `json:"next_hop"`
 }
 
 type NextHop struct {
 	Interface string `json:"interface"`
 	Metric    int    `json:"metric"`
+	Weight    int    `json:"weight"`
 	Check     *Check `json:"check"`
 }
 
