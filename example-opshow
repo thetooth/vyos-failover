@@ -1,0 +1,89 @@
+Failover Routes:
+	route 203.0.113.1/32
+		Status: up
+		Multipath: yes
+		next-hop 192.168.0.1 local-address 192.168.0.100 dev enp2s0 weight 10
+			Status: down
+			Downtime: 28 minutes 49 seconds
+			Successes: 3
+			Failures: 3
+			IP-SLA Check:
+				Target: 1.1.1.1
+				Interval: 1.5s
+				RTT Threshold: 40ms
+				Loss Threshold: 5
+			Packets Sent: 1246
+			Packets Recv: 1246
+			Duplicate Packets: 0
+			Packet Loss: 0 %
+			Latest RTT: 52.325086ms
+			Min RTT: 29.364206ms
+			Max RTT: 955.039634ms
+			Avg RTT: 42.881753ms
+			StdDev RTT: 59.292711ms
+
+		next-hop 192.168.0.2 local-address 192.168.0.100 dev enp2s0 weight 10
+			Status: up
+			Uptime: 31 minutes 8 seconds
+			Successes: 1
+			Failures: 0
+			IP-SLA Check:
+				Target: 192.168.0.2
+				Interval: 150ms
+				RTT Threshold: 4ms
+				Loss Threshold: 5
+			Packets Sent: 12462
+			Packets Recv: 12462
+			Duplicate Packets: 0
+			Packet Loss: 0 %
+			Latest RTT: 695.379µs
+			Min RTT: 280.573µs
+			Max RTT: 5.360546ms
+			Avg RTT: 696.78µs
+			StdDev RTT: 111.725µs
+
+
+	route 203.0.113.2/32
+		Status: up
+		Multipath: no
+		next-hop 192.168.0.1 local-address 192.168.0.100 dev enp2s0 metric 1
+			Status: up
+			Uptime: 31 minutes 8 seconds
+			Successes: 1
+			Failures: 0
+			IP-SLA Check:
+				Target: 192.168.0.1
+				Interval: 150ms
+				RTT Threshold: 4ms
+				Loss Threshold: 5
+			Packets Sent: 12462
+			Packets Recv: 12462
+			Duplicate Packets: 0
+			Packet Loss: 0 %
+			Latest RTT: 781.89µs
+			Min RTT: 148.111µs
+			Max RTT: 65.721785ms
+			Avg RTT: 652.771µs
+			StdDev RTT: 597.065µs
+
+		next-hop 192.168.0.2 local-address 192.168.0.100 dev enp2s0 metric 2
+			Status: up
+			Uptime: 31 minutes 8 seconds
+			Successes: 1
+			Failures: 0
+			IP-SLA Check:
+				Target: 192.168.0.2
+				Interval: 150ms
+				RTT Threshold: 4ms
+				Loss Threshold: 5
+			Packets Sent: 12462
+			Packets Recv: 12462
+			Duplicate Packets: 0
+			Packet Loss: 0 %
+			Latest RTT: 702.458µs
+			Min RTT: 221.105µs
+			Max RTT: 5.076403ms
+			Avg RTT: 661.501µs
+			StdDev RTT: 115.314µs
+
+

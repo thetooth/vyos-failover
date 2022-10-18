@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<interfaceDefinition>
+  <node name="show">
+    <children>
+      <node name="failover">
+        <properties>
+          <help>Show failover protocol information</help>
+        </properties>
+        <command>${vyos_op_scripts_dir}/show_failover.py</command>
+        <children>
+          <tagNode name="route">
+            <properties>
+              <help>Show information for a specific route</help>
+              <completionHelp>
+                <list>&lt;x.x.x.x&gt; &lt;x.x.x.x/x&gt;</list>
+              </completionHelp>
+            </properties>
+            <command>${vyos_op_scripts_dir}/show_failover.py --route "$5"</command>
+          </tagNode>
+        </children>
+      </node>
+    </children>
+  </node>
+</interfaceDefinition>
