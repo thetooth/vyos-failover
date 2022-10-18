@@ -99,6 +99,7 @@ func main() {
 			for _, route := range routes {
 				route.mu.Lock()
 				availableNexthops := 0
+				bestWeight := 0
 				op := []string{}
 
 				for nIdx, nexthop := range route.Nexthops {
@@ -135,6 +136,10 @@ func main() {
 						nexthop.Operational = true
 
 						if route.Cfg.Multipath {
+							if route.Cfg.DropLowerWeight && bestWeight != 0 && nexthop.Cfg.Weight < bestWeight {
+								continue
+							}
+							bestWeight = nexthop.Cfg.Weight
 							op[opID] += fmt.Sprintf(" nexthop via %v", nexthop.Name)
 							if nexthop.Cfg.Interface != "" {
 								op[opID] += fmt.Sprintf(" dev %v", nexthop.Cfg.Interface)
@@ -158,7 +163,8 @@ func main() {
 
 				if availableNexthops < 1 {
 					logrus.Warn("[ ROUTE_FAIL ] route:", route.Name)
-					_, stderr, err := execute("ip", fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table))
+					var stderr string
+					_, stderr, err = execute("ip", fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table))
 					if err != nil {
 						logrus.Error("Failed to destroy route, check configuration for errors")
 						logrus.Debug(stderr)
@@ -166,7 +172,8 @@ func main() {
 				} else {
 					logrus.Info("[ ROUTE_UPDATE ] route:", route.Name)
 					for _, arg := range op {
-						_, stderr, err := execute("ip", arg)
+						var stderr string
+						_, stderr, err = execute("ip", arg)
 						// On fault retry, usually means bad parameters from the user but, the link takes time to
 						// settle which can cause a bad gateway message that will be corrected in due time.
 						// Not doing this results in routes being incorrect until the next state change.
@@ -176,13 +183,13 @@ func main() {
 							break
 						}
 					}
-
-					if err != nil {
-						route.mu.Unlock()
-						continue
-					}
 				}
-				route.lastOp = op
+				if err != nil {
+					logrus.Debug("Did not apply last route, will retry in ", cfg.FlapRate)
+				} else {
+					logrus.Trace("Sync FSM")
+					route.lastOp = op
+				}
 
 				route.mu.Unlock()
 			}
@@ -206,17 +213,19 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			nexthopKeys = append(nexthopKeys, KV{key, value})
 		}
 		sort.Slice(nexthopKeys, func(i, j int) bool {
-			if nexthopKeys[i].Value.Metric == nexthopKeys[j].Value.Metric {
-				a := net.ParseIP(nexthopKeys[i].Key)
-				b := net.ParseIP(nexthopKeys[j].Key)
-				return bytes.Compare(a, b) < 0
+			im := nexthopKeys[i].Value.Metric + nexthopKeys[i].Value.Weight
+			jm := nexthopKeys[j].Value.Metric + nexthopKeys[j].Value.Weight
+			if im != jm {
+				in := net.ParseIP(nexthopKeys[i].Key)
+				jn := net.ParseIP(nexthopKeys[j].Key)
+				return bytes.Compare(in, jn) < 0
 			}
-			return nexthopKeys[i].Value.Metric < nexthopKeys[j].Value.Metric
+			return im < jm
 		})
 
 		// Build runtime nexthops table
 		for _, nexthopKV := range nexthopKeys {
-			newNextHop := NextHop{Cfg: cfg.Route[routeName].NextHop[nexthopKV.Key], Name: nexthopKV.Key}
+			newNextHop := NextHop{Cfg: cfg.Route[routeName].NextHop[nexthopKV.Key], Name: nexthopKV.Key, LastChange: time.Now()}
 
 			// Setup monitor
 			pinger, err := ping.NewPinger(newNextHop.Cfg.Check.Target)
@@ -224,7 +233,9 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 				logrus.Panic(err)
 			}
 			newNextHop.Monitor = pinger
-			pinger.SetLogger(ping.NoopLogger{})
+			if !trace {
+				pinger.SetLogger(ping.NoopLogger{})
+			}
 			pinger.RecordRtts = false
 			// Needs privileged mode due to VyOS not allowing user mode UDP sockets
 			pinger.SetPrivileged(true)
@@ -245,7 +256,7 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			}
 			pinger.OnRecv = func(pkt *ping.Packet) {
 				newRoute.mu.Lock()
-				newNextHop.LastRTT = (*pkt).Rtt
+				newNextHop.LastRTT = pkt.Rtt
 				newRoute.mu.Unlock()
 			}
 

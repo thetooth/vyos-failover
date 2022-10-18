@@ -60,7 +60,7 @@ def showNexthop(nexthop, multipath):
     print('\t\t\tPackets Sent:', nexthop['packets_sent'])
     print('\t\t\tPackets Recv:', nexthop['packets_recv'])
     print('\t\t\tDuplicate Packets:', nexthop['packets_recv_dup'])
-    print('\t\t\tPacket Loss:', nexthop['packet_loss'], '%')
+    print('\t\t\tPacket Loss:', "{}%".format(round(nexthop['packet_loss'], 2)))
 
     print('\t\t\tLatest RTT:', nexthop['last_rtt'])
     print('\t\t\tMin RTT:', nexthop['min_rtt'])
@@ -70,22 +70,18 @@ def showNexthop(nexthop, multipath):
 
 
 def duration(td):
-    elapsedTime = td.seconds
-    hours = math.floor(elapsedTime / (60*60))
-    elapsedTime = elapsedTime - hours * (60*60)
-    minutes = math.floor(elapsedTime / 60)
-    elapsedTime = elapsedTime - minutes * (60)
-    seconds = math.floor(elapsedTime)
-    elapsedTime = elapsedTime - seconds
-    ms = elapsedTime * 1000
-    if (hours != 0):
+    days = td.days
+    hours, rm = divmod(td.seconds, 3600)
+    minutes, seconds = divmod(rm, 60)
+
+    if (days != 0):
+        return "%d days %d hours %d minutes %d seconds" % (days, hours, minutes, seconds)
+    elif (hours != 0):
         return "%d hours %d minutes %d seconds" % (hours, minutes, seconds)
     elif (minutes != 0):
         return "%d minutes %d seconds" % (minutes, seconds)
-    elif (seconds != 0):
-        return "%d seconds %f ms" % (seconds, ms)
     else:
-        return "%f ms" % (ms)
+        return "%d seconds" % (seconds)
 
 
 if __name__ == '__main__':

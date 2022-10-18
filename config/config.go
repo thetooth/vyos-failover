@@ -26,10 +26,11 @@ type Config struct {
 }
 
 type Route struct {
-	Table     string             `json:"table"`
-	VRF       string             `json:"vrf"`
-	Multipath bool               `json:"multipath"`
-	NextHop   map[string]NextHop `json:"next_hop"`
+	Table           string             `json:"table"`
+	VRF             string             `json:"vrf"`
+	Multipath       bool               `json:"multipath"`
+	DropLowerWeight bool               `json:"drop_lower_weight"`
+	NextHop         map[string]NextHop `json:"next_hop"`
 }
 
 type NextHop struct {
