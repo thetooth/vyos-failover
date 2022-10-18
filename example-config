@@ -2,6 +2,7 @@ protocols {
     failover {
         route 0.0.0.0 {
             description 'Balance traffic between two providers'
+            multipath enabled
             next-hop 192.168.0.1 {
                 check {
                     target 1.1.1.1
@@ -10,7 +11,7 @@ protocols {
                     loss-threshold 1
                 }
                 interface eth0
-                metric 10
+                weight 1
             }
             next-hop 192.168.1.1 {
                 check {
@@ -20,7 +21,7 @@ protocols {
                     loss-threshold 1
                 }
                 interface eth1
-                metric 10
+                weight 1
             }
         }
         flap-rate 1s

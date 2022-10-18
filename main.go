@@ -238,7 +238,7 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			}
 			pinger.RecordRtts = false
 			// Needs privileged mode due to VyOS not allowing user mode UDP sockets
-			pinger.SetPrivileged(true)
+			// pinger.SetPrivileged(true)
 			if newNextHop.Cfg.Interface != "" {
 				pinger.Source, err = bindIface(newNextHop.Cfg.Interface, IsIPv6(newNextHop.Cfg.Check.Target))
 				if err != nil {

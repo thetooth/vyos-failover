@@ -25,20 +25,16 @@ service_status = Path(f'/tmp/vyos-failover')
 
 
 def showRoute(route):
-    col1 = 13
+    print('')
     print('\troute', route['route'])
     print('\t\tStatus:', ('up' if route['operational'] else 'down'))
-    print('\t\tMultipath:', ('yes' if route['multipath'] else 'no'))
+    print('\t\tMultipath:', ('enabled' if route['multipath'] else 'disabled'))
     for nexthop in route['next_hops']:
-        showNexthop(nexthop, route['multipath'])
         print('')
-
-    print('')
+        showNexthop(nexthop, route['multipath'])
 
 
 def showNexthop(nexthop, multipath):
-    col1 = 13
-    col2 = 17
     print('\t\tnext-hop', nexthop['gateway'], 'local-address', nexthop['source'],
           'dev', nexthop['interface'], ('weight' if multipath else 'metric'), nexthop['metric'])
     print('\t\t\tStatus:', ('up' if nexthop['operational'] else 'down'))
@@ -51,7 +47,8 @@ def showNexthop(nexthop, multipath):
     print('\t\t\tSuccesses:', nexthop['success_count'])
     print('\t\t\tFailures:', nexthop['fail_count'])
 
-    print('\t\t\tIP-SLA Check:')
+    print('\t\t\tCheck Configuration:')
+    print('\t\t\t\tType: ICMP (passive)')
     print('\t\t\t\tTarget:', nexthop['check']['target'])
     print('\t\t\t\tInterval:', nexthop['check']['interval'])
     print('\t\t\t\tRTT Threshold:', nexthop['check']['rtt_threshold'])
