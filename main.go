@@ -51,6 +51,7 @@ type NextHop struct {
 	FailCount    int
 	SuccessCount int
 	LastChange   time.Time
+	LastRTT      time.Duration
 }
 
 type KV struct {
@@ -242,6 +243,11 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 				newRoute.mu.Unlock()
 				statChange <- StatEvent{}
 			}
+			pinger.OnRecv = func(pkt *ping.Packet) {
+				newRoute.mu.Lock()
+				newNextHop.LastRTT = (*pkt).Rtt
+				newRoute.mu.Unlock()
+			}
 
 			go func() {
 				err = pinger.Run()
@@ -274,10 +280,14 @@ type NextHopStat struct {
 	Gateway string       `json:"gateway"`
 	Check   config.Check `json:"check"`
 
-	Operational  bool      `json:"operational"`
-	LastChange   time.Time `json:"last_change"`
-	FailCount    int       `json:"fail_count"`
-	SuccessCount int       `json:"success_count"`
+	Interface  string `json:"interface"`
+	SourceAddr string `json:"source"`
+	Metric     int    `json:"metric"`
+
+	Operational  bool `json:"operational"`
+	LastChange   int  `json:"last_change"`
+	FailCount    int  `json:"fail_count"`
+	SuccessCount int  `json:"success_count"`
 
 	PacketsRecv           int             `json:"packets_recv"`
 	PacketsSent           int             `json:"packets_sent"`
@@ -287,6 +297,7 @@ type NextHopStat struct {
 	MaxRtt                config.Interval `json:"max_rtt"`
 	AvgRtt                config.Interval `json:"avg_rtt"`
 	StdDevRtt             config.Interval `json:"std_dev_rtt"`
+	LastRTT               config.Interval `json:"last_rtt"`
 }
 
 func buildStatistics(routes []*Route) (stats Statistics) {
@@ -309,9 +320,13 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 				Check:   *nexthop.Cfg.Check,
 
 				Operational:  nexthop.Operational,
-				LastChange:   nexthop.LastChange,
+				LastChange:   int(nexthop.LastChange.Unix()),
 				SuccessCount: nexthop.SuccessCount,
 				FailCount:    nexthop.FailCount,
+
+				Interface:  nexthop.Cfg.Interface,
+				SourceAddr: nexthop.Monitor.Source,
+				Metric:     nexthop.Cfg.Metric + nexthop.Cfg.Weight, // One of the two
 
 				PacketsRecv:           nexthop.Statistics.PacketsRecv,
 				PacketsSent:           nexthop.Statistics.PacketsSent,
@@ -321,6 +336,7 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 				MaxRtt:                config.Interval{Duration: nexthop.Statistics.MaxRtt},
 				AvgRtt:                config.Interval{Duration: nexthop.Statistics.AvgRtt},
 				StdDevRtt:             config.Interval{Duration: nexthop.Statistics.StdDevRtt},
+				LastRTT:               config.Interval{Duration: nexthop.LastRTT},
 			}
 			if !nexthop.Operational {
 				totalFailures++
