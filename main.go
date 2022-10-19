@@ -54,11 +54,6 @@ type NextHop struct {
 	LastRTT      time.Duration
 }
 
-type KV struct {
-	Key   string
-	Value config.NextHop
-}
-
 func main() {
 	flag.BoolVar(&debug, "debug", false, "Show additional output")
 	flag.BoolVar(&trace, "trace", false, "Show A LOT of output")
@@ -91,7 +86,12 @@ func main() {
 	for {
 		select {
 		case <-c: // Clean up and quit
-			execute("ip", "route flush proto failover")
+			for routeName, route := range cfg.Route {
+				fmt.Println("[ EXIT_CLEANUP ] route: ", routeName)
+
+				arg := fmt.Sprintf("route del %v proto failover table %v", routeName, route.Table)
+				execute("ip", arg)
+			}
 			return
 		case <-statChange: // Update stats every time a check completes
 			buildStatistics(routes)
@@ -121,7 +121,7 @@ func main() {
 					if s.PacketLoss > nexthop.Cfg.Check.LossThreshold ||
 						s.PacketsSent == 0 || s.AvgRtt > nexthop.Cfg.Check.RTTThreshold.Duration {
 						if nexthop.Operational {
-							logrus.Warn("[ TARGET_FAIL ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
+							logrus.Warn("[ TARGET_FAIL ] route:", route.Name, " nexthop: ", nexthop.Name, " target: ", nexthop.Cfg.Check.Target)
 							nexthop.LastChange = time.Now()
 							nexthop.FailCount++
 						}
@@ -129,7 +129,7 @@ func main() {
 					} else {
 						availableNexthops++
 						if !nexthop.Operational {
-							logrus.Info("[ TARGET_SUCCESS ] route:", route.Name, "nexthop:", nexthop.Name, "target:", nexthop.Cfg.Check.Target)
+							logrus.Info("[ TARGET_SUCCESS ] route: ", route.Name, " nexthop: ", nexthop.Name, " target: ", nexthop.Cfg.Check.Target)
 							nexthop.LastChange = time.Now()
 							nexthop.SuccessCount++
 						}
@@ -162,7 +162,7 @@ func main() {
 				}
 
 				if availableNexthops < 1 {
-					logrus.Warn("[ ROUTE_FAIL ] route:", route.Name)
+					logrus.Warn("[ ROUTE_FAIL ] route: ", route.Name)
 					var stderr string
 					_, stderr, err = execute("ip", fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table))
 					if err != nil {
@@ -170,7 +170,7 @@ func main() {
 						logrus.Debug(stderr)
 					}
 				} else {
-					logrus.Info("[ ROUTE_UPDATE ] route:", route.Name)
+					logrus.Info("[ ROUTE_UPDATE ] route: ", route.Name)
 					for _, arg := range op {
 						var stderr string
 						_, stderr, err = execute("ip", arg)
@@ -198,34 +198,12 @@ func main() {
 }
 
 func buildRuntime(cfg *config.Config) (routes []*Route) {
-	routeKeys := []string{}
-	for k := range cfg.Route {
-		routeKeys = append(routeKeys, k)
-	}
-	sort.Strings(routeKeys)
-
-	for _, routeName := range routeKeys {
-		newRoute := Route{Cfg: cfg.Route[routeName], Name: routeName, mu: &sync.RWMutex{}}
-
-		// Sort nexthops by metric, then by IP
-		nexthopKeys := make([]KV, 0, len(cfg.Route[routeName].NextHop))
-		for key, value := range cfg.Route[routeName].NextHop {
-			nexthopKeys = append(nexthopKeys, KV{key, value})
-		}
-		sort.Slice(nexthopKeys, func(i, j int) bool {
-			im := nexthopKeys[i].Value.Metric + nexthopKeys[i].Value.Weight
-			jm := nexthopKeys[j].Value.Metric + nexthopKeys[j].Value.Weight
-			if im != jm {
-				in := net.ParseIP(nexthopKeys[i].Key)
-				jn := net.ParseIP(nexthopKeys[j].Key)
-				return bytes.Compare(in, jn) < 0
-			}
-			return im < jm
-		})
+	for routeName, routeConfig := range cfg.Route {
+		newRoute := Route{Cfg: routeConfig, Name: routeName, mu: &sync.RWMutex{}}
 
 		// Build runtime nexthops table
-		for _, nexthopKV := range nexthopKeys {
-			newNextHop := NextHop{Cfg: cfg.Route[routeName].NextHop[nexthopKV.Key], Name: nexthopKV.Key, LastChange: time.Now()}
+		for nexthopName, nexthopConfig := range routeConfig.NextHop {
+			newNextHop := NextHop{Cfg: nexthopConfig, Name: nexthopName, LastChange: time.Now()}
 
 			// Setup monitor
 			pinger, err := ping.NewPinger(newNextHop.Cfg.Check.Target)
@@ -270,8 +248,27 @@ func buildRuntime(cfg *config.Config) (routes []*Route) {
 			newRoute.Nexthops = append(newRoute.Nexthops, &newNextHop)
 		}
 
+		// Sort nexthops by metric, then by IP
+		sort.Slice(newRoute.Nexthops, func(i, j int) bool {
+			im := newRoute.Nexthops[i].Cfg.Metric + newRoute.Nexthops[i].Cfg.Weight
+			jm := newRoute.Nexthops[j].Cfg.Metric + newRoute.Nexthops[j].Cfg.Weight
+			if im != jm {
+				in := net.ParseIP(newRoute.Nexthops[i].Name)
+				jn := net.ParseIP(newRoute.Nexthops[j].Name)
+				return bytes.Compare(in, jn) < 0
+			}
+			return im < jm
+		})
+
 		routes = append(routes, &newRoute)
 	}
+
+	// Sort routes by IP
+	sort.Slice(routes, func(i, j int) bool {
+		in := net.ParseIP(routes[i].Name)
+		jn := net.ParseIP(routes[j].Name)
+		return bytes.Compare(in, jn) < 0
+	})
 
 	return
 }
@@ -374,35 +371,34 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 }
 
 func bindIface(ifaceName string, ipv6 bool) (addr string, err error) {
-	inet := "inet"
-	if ipv6 {
-		inet = "inet6"
-	}
-	t, _, err := execute("ip", fmt.Sprintf("--json -f %v addr show %v", inet, ifaceName))
+	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		return
 	}
-	res := []struct {
-		AddressInfo []struct {
-			Local string `json:"local"`
-		} `json:"addr_info"`
-	}{}
-	err = json.Unmarshal([]byte(t), &res)
+	if !isUp(iface) {
+		err = errors.New("Interface is down")
+		return
+	}
+	addrs, err := iface.Addrs()
 	if err != nil {
 		return
 	}
-
-	if len(res) < 1 || len(res[0].AddressInfo) < 1 {
-		err = errors.New(fmt.Sprintf("interface %s don't have an IP address\n", ifaceName))
-		return
-	}
-
-	for _, addrInfo := range res[0].AddressInfo {
-		addr = addrInfo.Local
+	for _, a := range addrs {
+		ip, _, err := net.ParseCIDR(a.String())
+		if err != nil {
+			continue
+		}
+		if ipv6 && !IsIPv6(ip.String()) {
+			continue
+		}
+		addr = ip.String()
 		if strings.HasPrefix(addr, "fe80::") { // Prefer global addresses
 			continue
 		}
 		break
+	}
+	if addr == "" {
+		err = errors.New("Interface has no addresses")
 	}
 
 	return
@@ -411,6 +407,8 @@ func bindIface(ifaceName string, ipv6 bool) (addr string, err error) {
 func IsIPv6(address string) bool {
 	return strings.Count(address, ":") >= 2
 }
+
+func isUp(nif *net.Interface) bool { return nif.Flags&net.FlagUp != 0 }
 
 func execute(command string, args string) (stdout, stderr string, err error) {
 	logrus.Tracef("EXEC: %v %v", command, args)

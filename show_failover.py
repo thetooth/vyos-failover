@@ -17,7 +17,6 @@
 import argparse
 import json
 from datetime import datetime
-import math
 
 from pathlib import Path
 
@@ -25,13 +24,13 @@ service_status = Path(f'/tmp/vyos-failover')
 
 
 def showRoute(route):
-    print('')
     print('\troute', route['route'])
     print('\t\tStatus:', ('up' if route['operational'] else 'down'))
     print('\t\tMultipath:', ('enabled' if route['multipath'] else 'disabled'))
     for nexthop in route['next_hops']:
         print('')
         showNexthop(nexthop, route['multipath'])
+    print('')
 
 
 def showNexthop(nexthop, multipath):
@@ -54,15 +53,15 @@ def showNexthop(nexthop, multipath):
     print('\t\t\t\tRTT Threshold:', nexthop['check']['rtt_threshold'])
     print('\t\t\t\tLoss Threshold:', nexthop['check']['loss_threshold'])
 
+    print('\t\t\tPacket Loss:', "{}%".format(round(nexthop['packet_loss'], 2)))
     print('\t\t\tPackets Sent:', nexthop['packets_sent'])
     print('\t\t\tPackets Recv:', nexthop['packets_recv'])
     print('\t\t\tDuplicate Packets:', nexthop['packets_recv_dup'])
-    print('\t\t\tPacket Loss:', "{}%".format(round(nexthop['packet_loss'], 2)))
 
-    print('\t\t\tLatest RTT:', nexthop['last_rtt'])
     print('\t\t\tMin RTT:', nexthop['min_rtt'])
     print('\t\t\tMax RTT:', nexthop['max_rtt'])
     print('\t\t\tAvg RTT:', nexthop['avg_rtt'])
+    print('\t\t\tLatest RTT:', nexthop['last_rtt'])
     print('\t\t\tStdDev RTT:', nexthop['std_dev_rtt'])
 
 
@@ -96,4 +95,6 @@ if __name__ == '__main__':
 
     print('Failover Routes:')
     for route in config:
+        if args.route != None and args.route != route['route']:
+            continue
         showRoute(route)
