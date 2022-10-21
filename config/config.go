@@ -37,7 +37,7 @@ type NextHop struct {
 	Interface string `json:"interface"`
 	Metric    int    `json:"metric"`
 	Weight    int    `json:"weight"`
-	Check     *Check `json:"check"`
+	Check     Check  `json:"check"`
 }
 
 type Check struct {

@@ -325,7 +325,7 @@ func buildStatistics(routes []*Route) (stats Statistics) {
 			}
 			n := NextHopStat{
 				Gateway: nexthop.Name,
-				Check:   *nexthop.Cfg.Check,
+				Check:   nexthop.Cfg.Check,
 
 				Operational:  nexthop.Operational,
 				LastChange:   int(nexthop.LastChange.Unix()),
