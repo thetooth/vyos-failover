@@ -24,7 +24,7 @@ service_status = Path(f'/tmp/vyos-failover')
 
 
 def showRoute(route):
-    print('\troute', route['route'])
+    print('\troute', route['name'])
     print('\t\tStatus:', ('up' if route['operational'] else 'down'))
     print('\t\tMultipath:', ('enabled' if route['multipath'] else 'disabled'))
     for nexthop in route['next_hops']:

@@ -14,3 +14,4 @@ test-routes:
 test-deploy:
 	scp vyos-failover vyos@10.0.16.1:vyos-failover
 	scp vyos-test.json vyos@10.0.16.1:vyos-test.json
+	scp show_failover.py vyos@10.0.16.1:show_failover.py
