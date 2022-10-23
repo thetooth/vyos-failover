@@ -8,12 +8,23 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/thetooth/vyos-failover/check"
 	"github.com/thetooth/vyos-failover/config"
-	"github.com/thetooth/vyos-failover/ping"
-	"github.com/thetooth/vyos-failover/util"
 )
 
-func New(cfg *config.Config) (routes []*Route) {
+// Route is a composite type containing configuration and current runtime states
+type Route struct {
+	*sync.RWMutex
+	Cfg config.Route
+
+	Name string
+
+	Nexthops []*NextHop
+	lastOp   []string
+}
+
+// BuildRoutes takes in the unmarshalled configuration and initialises and sorts a list of routes for control
+func BuildRoutes(cfg *config.Config) (routes []*Route) {
 	for routeName, routeConfig := range cfg.Route {
 		newRoute := Route{Cfg: routeConfig, Name: routeName, RWMutex: &sync.RWMutex{}}
 
@@ -21,24 +32,19 @@ func New(cfg *config.Config) (routes []*Route) {
 		for nexthopName, nexthopConfig := range routeConfig.NextHop {
 			newNextHop := NextHop{Cfg: nexthopConfig, Name: nexthopName, LastChange: time.Now()}
 
-			// Setup monitor
-			pinger, err := ping.NewPinger(newNextHop.Cfg.Check.Target)
+			// Set up monitor
+			pinger, err := check.NewPinger(newNextHop.Cfg.Check.Target)
 			if err != nil {
-				logrus.Panic(err)
+				logrus.Fatal("Unable to load configuration: ", err)
 			}
-			newNextHop.Monitor = pinger
+			newNextHop.Check = pinger
 			pinger.RecordRtts = false
 			// Needs privileged mode due to VyOS not allowing user mode UDP sockets
 			// pinger.SetPrivileged(true)
 			pinger.Interval = newNextHop.Cfg.Check.Interval.Duration
 
 			// Collect statistics every time a packet is sent
-			pinger.OnSend = func(pkt *ping.Packet) {
-				newRoute.Lock()
-				newNextHop.Statistics = *pinger.Statistics()
-				newRoute.Unlock()
-			}
-			pinger.OnRecv = func(pkt *ping.Packet) {
+			pinger.OnRecv = func(pkt *check.Packet) {
 				newRoute.Lock()
 				newNextHop.LastRTT = pkt.Rtt
 				newRoute.Unlock()
@@ -68,51 +74,6 @@ func New(cfg *config.Config) (routes []*Route) {
 		jn := net.ParseIP(routes[j].Name)
 		return bytes.Compare(in, jn) < 0
 	})
-
-	return
-}
-
-type Route struct {
-	*sync.RWMutex
-	Cfg config.Route
-
-	Name string
-
-	Nexthops []*NextHop
-	lastOp   []string
-}
-
-type NextHop struct {
-	Cfg config.NextHop
-
-	Name       string
-	Statistics ping.Statistics
-	Monitor    *ping.Pinger
-
-	Operational  bool
-	FailCount    int
-	SuccessCount int
-	LastChange   time.Time
-	LastRTT      time.Duration
-}
-
-func (n *NextHop) Respawn() (err error) {
-	nSrc, err := util.BindIface(n.Cfg.Interface, util.IsIPv6(n.Cfg.Check.Target))
-	if err != nil {
-		n.Monitor.Stop()
-		n.Monitor.Source = "???"
-		return
-	}
-	if n.Monitor.Source != nSrc {
-		n.Monitor.Stop()
-		n.Monitor.Source = nSrc
-		go func() {
-			err = n.Monitor.Run()
-			if err != nil {
-				logrus.Panic(err)
-			}
-		}()
-	}
 
 	return
 }

@@ -3,18 +3,21 @@ package decision
 import (
 	"fmt"
 	"reflect"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/thetooth/vyos-failover/util"
 )
 
-func Compute(routes []*Route) (err error) {
+// Evaluate compares each routes next-hop, if none are passing the route is removed
+func Evaluate(routes []*Route) (err error) {
 	for _, route := range routes {
 		route.Lock()
 
 		op := []string{}
 
+		// When multipath is enabled build a single replace command with all of the available targets.
+		// If DropLowerWeight is also enabled then next-hops with weights less than the first operational
+		// target are not included.
 		if route.Cfg.Multipath {
 			availableNexthops := 0
 			bestWeight := 0
@@ -36,10 +39,13 @@ func Compute(routes []*Route) (err error) {
 				}
 			}
 
+			// If none of the targets are alive we will delete the route entry
 			if availableNexthops < 1 {
 				op[0] = fmt.Sprintf("route del %v protocol failover table %v", route.Name, route.Cfg.Table)
 			}
 		} else {
+			// For regular metric driven next-hops, append a replace command for each next-hop, replacing
+			// with delete when a given target is down
 			for opIdx, nexthop := range route.Nexthops {
 				op = append(op, fmt.Sprintf("route replace %v proto failover table %v", route.Name, route.Cfg.Table))
 				if nexthop.IsUp(route.Name) {
@@ -55,7 +61,7 @@ func Compute(routes []*Route) (err error) {
 			}
 		}
 
-		// If no changes occurred then skip
+		// If no changes occurred then skip actually executing the command
 		if reflect.DeepEqual(op, route.lastOp) {
 			route.Unlock()
 			continue
@@ -66,8 +72,7 @@ func Compute(routes []*Route) (err error) {
 			var stderr string
 			_, stderr, err = util.Exec("ip", arg)
 			if err != nil {
-				logrus.Trace("Failed to update route, check configuration for errors")
-				logrus.Trace(stderr)
+				logrus.Debug("Failed to update route: ", stderr)
 			}
 		}
 
@@ -76,34 +81,4 @@ func Compute(routes []*Route) (err error) {
 	}
 
 	return
-}
-
-func (n *NextHop) IsUp(route string) bool {
-	if err := n.Respawn(); err != nil {
-		if n.Operational {
-			logrus.Warn("[ TARGET_FAIL ] No address")
-			n.LastChange = time.Now()
-			n.FailCount++
-		}
-		n.Operational = false
-		return false
-	}
-	if n.Statistics.PacketLoss > n.Cfg.Check.LossThreshold || n.Statistics.AvgRtt > n.Cfg.Check.RTTThreshold.Duration {
-		if n.Operational {
-			logrus.Warn("[ TARGET_FAIL ] route: ", route, " nexthop: ", n.Name, " target: ", n.Cfg.Check.Target)
-			n.LastChange = time.Now()
-			n.FailCount++
-		}
-		n.Operational = false
-		return false
-	}
-
-	if !n.Operational {
-		logrus.Info("[ TARGET_SUCCESS ] route: ", route, " nexthop: ", n.Name, " target: ", n.Cfg.Check.Target)
-		n.LastChange = time.Now()
-		n.SuccessCount++
-	}
-	n.Operational = true
-
-	return true
 }

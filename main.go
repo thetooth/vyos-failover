@@ -48,7 +48,7 @@ func main() {
 	flap := time.NewTicker(cfg.FlapRate.Duration)
 
 	// Build runtime route table
-	routes := decision.New(cfg)
+	routes := decision.BuildRoutes(cfg)
 
 	for {
 		select {
@@ -60,12 +60,14 @@ func main() {
 				util.Exec("ip", arg)
 			}
 			return
-		case <-flap.C: // Compute next routing table update and output stats
-			err = decision.Compute(routes)
+		case <-flap.C:
+			// Compute next routing table
+			err = decision.Evaluate(routes)
 			if err != nil {
-				logrus.Debug(err)
+				logrus.Debug("Issue computing routes: ", err)
 			}
 
+			// Update and output statistics
 			stats := statistics.Build(routes)
 			b, err := json.Marshal(stats)
 			if err != nil {

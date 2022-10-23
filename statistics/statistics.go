@@ -43,15 +43,16 @@ type NextHopStat struct {
 func Build(routes []*decision.Route) (stats Statistics) {
 	for _, route := range routes {
 		route.RLock()
-		s := RouteStat{
+		r := RouteStat{
 			Name:      route.Name,
 			Multipath: route.Cfg.Multipath,
 		}
 
 		var totalFailures int
 		for _, nexthop := range route.Nexthops {
+			s := nexthop.Check.Statistics()
 			// Check loss is not NaN
-			loss := nexthop.Statistics.PacketLoss
+			loss := s.PacketLoss
 			if math.IsNaN(loss) {
 				loss = 0
 			}
@@ -65,31 +66,31 @@ func Build(routes []*decision.Route) (stats Statistics) {
 				FailCount:    nexthop.FailCount,
 
 				Interface:  nexthop.Cfg.Interface,
-				SourceAddr: nexthop.Monitor.Source,
+				SourceAddr: nexthop.Check.Target(),
 				Metric:     nexthop.Cfg.Metric + nexthop.Cfg.Weight, // One of the two
 
-				PacketsRecv:           nexthop.Statistics.PacketsRecv,
-				PacketsSent:           nexthop.Statistics.PacketsSent,
-				PacketsRecvDuplicates: nexthop.Statistics.PacketsRecvDuplicates,
+				PacketsRecv:           s.PacketsRecv,
+				PacketsSent:           s.PacketsSent,
+				PacketsRecvDuplicates: s.PacketsRecvDuplicates,
 				PacketLoss:            loss,
-				MinRtt:                config.Interval{Duration: nexthop.Statistics.MinRtt},
-				MaxRtt:                config.Interval{Duration: nexthop.Statistics.MaxRtt},
-				AvgRtt:                config.Interval{Duration: nexthop.Statistics.AvgRtt},
-				StdDevRtt:             config.Interval{Duration: nexthop.Statistics.StdDevRtt},
+				MinRtt:                config.Interval{Duration: s.MinRtt},
+				MaxRtt:                config.Interval{Duration: s.MaxRtt},
+				AvgRtt:                config.Interval{Duration: s.AvgRtt},
+				StdDevRtt:             config.Interval{Duration: s.StdDevRtt},
 				LastRTT:               config.Interval{Duration: nexthop.LastRTT},
 			}
 			if !nexthop.Operational {
 				totalFailures++
 			}
-			s.NextHops = append(s.NextHops, n)
+			r.NextHops = append(r.NextHops, n)
 		}
 
 		if totalFailures < len(route.Nexthops) {
-			s.Operational = true
+			r.Operational = true
 		}
 		route.RUnlock()
 
-		stats = append(stats, s)
+		stats = append(stats, r)
 	}
 
 	return

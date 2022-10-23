@@ -1,55 +1,4 @@
-// Package ping is a simple but powerful ICMP echo (ping) library.
-//
-// Here is a very simple example that sends and receives three packets:
-//
-//	pinger, err := ping.NewPinger("www.google.com")
-//	if err != nil {
-//		panic(err)
-//	}
-//	pinger.Count = 3
-//	err = pinger.Run() // blocks until finished
-//	if err != nil {
-//		panic(err)
-//	}
-//	stats := pinger.Statistics() // get send/receive/rtt stats
-//
-// Here is an example that emulates the traditional UNIX ping command:
-//
-//	pinger, err := ping.NewPinger("www.google.com")
-//	if err != nil {
-//		panic(err)
-//	}
-//	// Listen for Ctrl-C.
-//	c := make(chan os.Signal, 1)
-//	signal.Notify(c, os.Interrupt)
-//	go func() {
-//		for _ = range c {
-//			pinger.Stop()
-//		}
-//	}()
-//	pinger.OnRecv = func(pkt *ping.Packet) {
-//		fmt.Printf("%d bytes from %s: icmp_seq=%d time=%v\n",
-//			pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
-//	}
-//	pinger.OnFinish = func(stats *ping.Statistics) {
-//		fmt.Printf("\n--- %s ping statistics ---\n", stats.Addr)
-//		fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
-//			stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
-//		fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
-//			stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
-//	}
-//	fmt.Printf("PING %s (%s):\n", pinger.Addr(), pinger.IPAddr())
-//	err = pinger.Run()
-//	if err != nil {
-//		panic(err)
-//	}
-//
-// It sends ICMP Echo Request packet(s) and waits for an Echo Reply in response.
-// If it receives a response, it calls the OnRecv callback. When it's finished,
-// it calls the OnFinish callback.
-//
-// For a full ping example, see "cmd/ping/ping.go".
-package ping
+package check
 
 import (
 	"bytes"
@@ -83,18 +32,16 @@ var (
 	ipv6Proto = map[string]string{"icmp": "ip6:ipv6-icmp", "udp": "udp6"}
 )
 
-// New returns a new Pinger struct pointer.
-func New(addr string) *Pinger {
+// NewPinger returns a new Pinger and resolves the address.
+func NewPinger(addr string) (*Pinger, error) {
 	r := rand.New(rand.NewSource(getSeed()))
 	firstUUID := uuid.New()
 	var firstSequence = map[uuid.UUID]map[int]struct{}{}
 	firstSequence[firstUUID] = make(map[int]struct{})
-	return &Pinger{
-		Count:      -1,
+	p := &Pinger{
 		Interval:   time.Second,
 		RecordRtts: true,
 		Size:       timeSliceLength + trackerLength,
-		Timeout:    time.Duration(math.MaxInt64),
 
 		addr:              addr,
 		done:              make(chan interface{}),
@@ -107,11 +54,6 @@ func New(addr string) *Pinger {
 		awaitingSequences: firstSequence,
 		TTL:               64,
 	}
-}
-
-// NewPinger returns a new Pinger and resolves the address.
-func NewPinger(addr string) (*Pinger, error) {
-	p := New(addr)
 	return p, p.Resolve()
 }
 
@@ -119,18 +61,6 @@ func NewPinger(addr string) (*Pinger, error) {
 type Pinger struct {
 	// Interval is the wait time between each packet send. Default is 1s.
 	Interval time.Duration
-
-	// Timeout specifies a timeout before ping exits, regardless of how many
-	// packets have been received.
-	Timeout time.Duration
-
-	// Count tells pinger to stop after sending (and receiving) Count echo
-	// packets. If this option is not specified, pinger will operate until
-	// interrupted.
-	Count int
-
-	// Debug runs in debug mode
-	Debug bool
 
 	// Number of packets sent
 	PacketsSent int
@@ -299,19 +229,6 @@ func (p *Pinger) updateStatistics(pkt *Packet) {
 	p.stdDevRtt = time.Duration(math.Sqrt(float64(p.stddevm2 / pktCount)))
 }
 
-// SetIPAddr sets the ip address of the target host.
-func (p *Pinger) SetIPAddr(ipaddr *net.IPAddr) {
-	p.ipv4 = isIPv4(ipaddr.IP)
-
-	p.ipaddr = ipaddr
-	p.addr = ipaddr.String()
-}
-
-// IPAddr returns the ip address of the target host.
-func (p *Pinger) IPAddr() *net.IPAddr {
-	return p.ipaddr
-}
-
 // Resolve does the DNS lookup for the Pinger address and sets IP protocol.
 func (p *Pinger) Resolve() error {
 	if len(p.addr) == 0 {
@@ -329,9 +246,9 @@ func (p *Pinger) Resolve() error {
 	return nil
 }
 
-// SetAddr resolves and sets the ip address of the target host, addr can be a
+// SetTarget resolves and sets the ip address of the target host, addr can be a
 // DNS name like "www.google.com" or IP like "127.0.0.1".
-func (p *Pinger) SetAddr(addr string) error {
+func (p *Pinger) SetTarget(addr string) error {
 	oldAddr := p.addr
 	p.addr = addr
 	err := p.Resolve()
@@ -343,7 +260,7 @@ func (p *Pinger) SetAddr(addr string) error {
 }
 
 // Addr returns the string ip address of the target host.
-func (p *Pinger) Addr() string {
+func (p *Pinger) Target() string {
 	return p.addr
 }
 
@@ -372,21 +289,6 @@ func (p *Pinger) SetPrivileged(privileged bool) {
 	} else {
 		p.protocol = "udp"
 	}
-}
-
-// Privileged returns whether pinger is running in privileged mode.
-func (p *Pinger) Privileged() bool {
-	return p.protocol == "icmp"
-}
-
-// SetID sets the ICMP identifier.
-func (p *Pinger) SetID(id int) {
-	p.id = id
-}
-
-// ID returns the ICMP identifier.
-func (p *Pinger) ID() int {
-	return p.id
 }
 
 // Run runs the pinger. This is a blocking function that will exit when it's
@@ -447,11 +349,9 @@ func (p *Pinger) runLoop(
 	conn packetConn,
 	recvCh <-chan *packet,
 ) error {
-	timeout := time.NewTicker(p.Timeout)
 	interval := time.NewTicker(p.Interval)
 	defer func() {
 		interval.Stop()
-		timeout.Stop()
 	}()
 
 	if err := p.sendICMP(conn); err != nil {
@@ -463,27 +363,17 @@ func (p *Pinger) runLoop(
 		case <-p.done:
 			return nil
 
-		case <-timeout.C:
-			return nil
-
 		case r := <-recvCh:
 			err := p.processPacket(r)
 			if err != nil {
-				logrus.Tracef("processing received packet: %s", err)
+				logrus.Error("Received packet: ", err)
 			}
 
 		case <-interval.C:
-			if p.Count > 0 && p.PacketsSent >= p.Count {
-				interval.Stop()
-				continue
-			}
 			err := p.sendICMP(conn)
 			if err != nil {
-				logrus.Tracef("sending packet: %s", err)
+				logrus.Error("Sending packet: ", err)
 			}
-		}
-		if p.Count > 0 && p.PacketsRecv >= p.Count {
-			return nil
 		}
 	}
 }
@@ -736,7 +626,9 @@ func (p *Pinger) sendICMP(conn packetConn) error {
 		}
 		// mark this sequence as in-flight
 		p.awaitingSequences[currentUUID][p.sequence] = struct{}{}
+		p.statsMu.Lock()
 		p.PacketsSent++
+		p.statsMu.Unlock()
 		p.sequence++
 		if p.sequence > 65535 {
 			newUUID := uuid.New()
