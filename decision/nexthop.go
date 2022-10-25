@@ -18,7 +18,6 @@ type NextHop struct {
 	FailCount    int
 	SuccessCount int
 	LastChange   time.Time
-	LastRTT      time.Duration
 	Check        check.Check
 }
 
@@ -61,13 +60,16 @@ func (n *NextHop) Bind() (err error) {
 	nSrc, err := util.BindIface(n.Cfg.Interface, util.IsIPv6(n.Cfg.Check.Target))
 	if err != nil {
 		n.Check.Stop()
-		n.Check.SetTarget("???")
+		n.Check.SetSource("???")
 		return
 	}
 
-	if n.Check.Target() != nSrc {
+	if n.Check.Source() != nSrc {
 		n.Check.Stop()
-		n.Check.SetTarget(nSrc)
+		err = n.Check.SetSource(nSrc)
+		if err != nil {
+			logrus.Panic(err)
+		}
 		go func() {
 			err = n.Check.Run()
 			if err != nil {

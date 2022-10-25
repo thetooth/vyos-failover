@@ -72,6 +72,7 @@ type Pinger struct {
 	PacketsRecvDuplicates int
 
 	// Round trip time statistics
+	rtt       time.Duration
 	minRtt    time.Duration
 	maxRtt    time.Duration
 	avgRtt    time.Duration
@@ -107,15 +108,13 @@ type Pinger struct {
 	// Tracker: Used to uniquely identify packets - Deprecated
 	Tracker uint64
 
-	// Source is the source IP address
-	Source string
-
 	// Channel and mutex used to communicate when the Pinger should stop between goroutines.
 	done chan interface{}
 	lock sync.Mutex
 
-	ipaddr *net.IPAddr
-	addr   string
+	ipaddr  *net.IPAddr
+	addr    string
+	srcAddr string
 
 	// trackerUUIDs is the list of UUIDs being used for sending packets.
 	trackerUUIDs []uuid.UUID
@@ -163,49 +162,12 @@ type Packet struct {
 	ID int
 }
 
-// Statistics represent the stats of a currently running or finished
-// pinger operation.
-type Statistics struct {
-	// PacketsRecv is the number of packets received.
-	PacketsRecv int
-
-	// PacketsSent is the number of packets sent.
-	PacketsSent int
-
-	// PacketsRecvDuplicates is the number of duplicate responses there were to a sent packet.
-	PacketsRecvDuplicates int
-
-	// PacketLoss is the percentage of packets lost.
-	PacketLoss float64
-
-	// IPAddr is the address of the host being pinged.
-	IPAddr *net.IPAddr
-
-	// Addr is the string address of the host being pinged.
-	Addr string
-
-	// Rtts is all of the round-trip times sent via this pinger.
-	Rtts []time.Duration
-
-	// MinRtt is the minimum round-trip time sent via this pinger.
-	MinRtt time.Duration
-
-	// MaxRtt is the maximum round-trip time sent via this pinger.
-	MaxRtt time.Duration
-
-	// AvgRtt is the average round-trip time sent via this pinger.
-	AvgRtt time.Duration
-
-	// StdDevRtt is the standard deviation of the round-trip times sent via
-	// this pinger.
-	StdDevRtt time.Duration
-}
-
 func (p *Pinger) updateStatistics(pkt *Packet) {
 	p.statsMu.Lock()
 	defer p.statsMu.Unlock()
 
 	p.PacketsRecv++
+	p.rtt = pkt.Rtt
 	if p.RecordRtts {
 		p.rtts = append(p.rtts, pkt.Rtt)
 	}
@@ -262,6 +224,16 @@ func (p *Pinger) SetTarget(addr string) error {
 // Addr returns the string ip address of the target host.
 func (p *Pinger) Target() string {
 	return p.addr
+}
+
+func (p *Pinger) SetSource(addr string) error {
+	p.srcAddr = addr
+
+	return nil
+}
+
+func (p *Pinger) Source() string {
+	return p.srcAddr
 }
 
 // SetNetwork allows configuration of DNS resolution.
@@ -411,6 +383,7 @@ func (p *Pinger) Statistics() *Statistics {
 		PacketsRecvDuplicates: p.PacketsRecvDuplicates,
 		PacketLoss:            loss,
 		Rtts:                  p.rtts,
+		LatestRTT:             p.rtt,
 		Addr:                  p.addr,
 		IPAddr:                p.ipaddr,
 		MaxRtt:                p.maxRtt,
@@ -650,11 +623,11 @@ func (p *Pinger) listen() (packetConn, error) {
 
 	if p.ipv4 {
 		var c icmpv4Conn
-		c.c, err = icmp.ListenPacket(ipv4Proto[p.protocol], p.Source)
+		c.c, err = icmp.ListenPacket(ipv4Proto[p.protocol], p.srcAddr)
 		conn = &c
 	} else {
 		var c icmpV6Conn
-		c.c, err = icmp.ListenPacket(ipv6Proto[p.protocol], p.Source)
+		c.c, err = icmp.ListenPacket(ipv6Proto[p.protocol], p.srcAddr)
 		conn = &c
 	}
 

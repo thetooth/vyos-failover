@@ -66,7 +66,7 @@ func Build(routes []*decision.Route) (stats Statistics) {
 				FailCount:    nexthop.FailCount,
 
 				Interface:  nexthop.Cfg.Interface,
-				SourceAddr: nexthop.Check.Target(),
+				SourceAddr: nexthop.Check.Source(),
 				Metric:     nexthop.Cfg.Metric + nexthop.Cfg.Weight, // One of the two
 
 				PacketsRecv:           s.PacketsRecv,
@@ -77,7 +77,7 @@ func Build(routes []*decision.Route) (stats Statistics) {
 				MaxRtt:                config.Interval{Duration: s.MaxRtt},
 				AvgRtt:                config.Interval{Duration: s.AvgRtt},
 				StdDevRtt:             config.Interval{Duration: s.StdDevRtt},
-				LastRTT:               config.Interval{Duration: nexthop.LastRTT},
+				LastRTT:               config.Interval{Duration: s.LatestRTT},
 			}
 			if !nexthop.Operational {
 				totalFailures++

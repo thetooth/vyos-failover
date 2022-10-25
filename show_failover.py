@@ -47,7 +47,7 @@ def showNexthop(nexthop, multipath):
     print('\t\t\tFailures:', nexthop['fail_count'])
 
     print('\t\t\tCheck Configuration:')
-    print('\t\t\t\tType: ICMP (passive)')
+    print('\t\t\t\tType:', nexthop['check']['type'])
     print('\t\t\t\tTarget:', nexthop['check']['target'])
     print('\t\t\t\tInterval:', nexthop['check']['interval'])
     print('\t\t\t\tRTT Threshold:', nexthop['check']['rtt_threshold'])

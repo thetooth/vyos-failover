@@ -33,21 +33,26 @@ func BuildRoutes(cfg *config.Config) (routes []*Route) {
 			newNextHop := NextHop{Cfg: nexthopConfig, Name: nexthopName, LastChange: time.Now()}
 
 			// Set up monitor
-			pinger, err := check.NewPinger(newNextHop.Cfg.Check.Target)
-			if err != nil {
-				logrus.Fatal("Unable to load configuration: ", err)
-			}
-			newNextHop.Check = pinger
-			pinger.RecordRtts = false
-			// Needs privileged mode due to VyOS not allowing user mode UDP sockets
-			// pinger.SetPrivileged(true)
-			pinger.Interval = newNextHop.Cfg.Check.Interval.Duration
-
-			// Collect statistics every time a packet is sent
-			pinger.OnRecv = func(pkt *check.Packet) {
-				newRoute.Lock()
-				newNextHop.LastRTT = pkt.Rtt
-				newRoute.Unlock()
+			switch newNextHop.Cfg.Check.Kind {
+			case "icmp", "udp":
+				pinger, err := check.NewPinger(newNextHop.Cfg.Check.Target)
+				if err != nil {
+					logrus.Fatal("Unable to load configuration: ", err)
+				}
+				newNextHop.Check = pinger
+				pinger.RecordRtts = false
+				// Needs privileged mode due to VyOS not allowing user mode UDP sockets
+				// pinger.SetPrivileged(true)
+				pinger.Interval = newNextHop.Cfg.Check.Interval.Duration
+			case "tcp":
+				tcper, err := check.NewTCPer(newNextHop.Cfg.Check.Target)
+				if err != nil {
+					logrus.Fatal("Unable to load configuration: ", err)
+				}
+				newNextHop.Check = tcper
+				tcper.Interval = newNextHop.Cfg.Check.Interval.Duration
+			default:
+				logrus.Fatal("Unsupported check type: ", newNextHop.Cfg.Check.Kind)
 			}
 
 			newRoute.Nexthops = append(newRoute.Nexthops, &newNextHop)

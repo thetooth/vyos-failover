@@ -42,6 +42,7 @@ type NextHop struct {
 
 type Check struct {
 	Target        string   `json:"target"`
+	Kind          string   `json:"type"`
 	Interval      Interval `json:"interval"`
 	RTTThreshold  Interval `json:"rtt_threshold"`
 	LossThreshold float64  `json:"loss_threshold"`
