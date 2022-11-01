@@ -51,6 +51,13 @@ func BuildRoutes(cfg *config.Config) (routes []*Route) {
 				}
 				newNextHop.Check = tcper
 				tcper.Interval = newNextHop.Cfg.Check.Interval.Duration
+			case "http":
+				httper, err := check.NewHTTPer(newNextHop.Cfg.Check.Target)
+				if err != nil {
+					logrus.Fatal("Unable to load configuration: ", err)
+				}
+				newNextHop.Check = httper
+				httper.Interval = newNextHop.Cfg.Check.Interval.Duration
 			default:
 				logrus.Fatal("Unsupported check type: ", newNextHop.Cfg.Check.Kind)
 			}
