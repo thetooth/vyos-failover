@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
 	"github.com/thetooth/vyos-failover/config"
 	"github.com/thetooth/vyos-failover/decision"
@@ -42,6 +43,17 @@ func main() {
 		logrus.Panic(err)
 	}
 
+	// Create config watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logrus.Fatal(err)
+	}
+	defer watcher.Close()
+	err = watcher.Add(path)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
 	// Control signals
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -60,6 +72,25 @@ func main() {
 				util.Exec("ip", arg)
 			}
 			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				break
+			}
+			logrus.Trace("fsnotify:", event)
+			if event.Has(fsnotify.Write) {
+				for _, route := range routes {
+					for _, nexthop := range route.Nexthops {
+						nexthop.Check.Stop()
+					}
+				}
+				cfg, err = config.Load(path)
+				if err != nil {
+					logrus.Error("Did not load changed config: ", err)
+					break
+				}
+				routes = decision.BuildRoutes(cfg)
+				logrus.Info("Loaded configuration changes")
+			}
 		case <-flap.C:
 			// Compute next routing table
 			err = decision.Evaluate(routes)

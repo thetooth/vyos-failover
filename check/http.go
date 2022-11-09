@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -89,8 +88,7 @@ func (t *HTTPer) runLoop() (err error) {
 
 			resp, err := client.Get(t.addr)
 			if err != nil {
-				logrus.Trace(err)
-				continue
+				return err
 			}
 			resp.Body.Close()
 			receiveTime = time.Now()

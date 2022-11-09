@@ -18,7 +18,7 @@ func Evaluate(routes []*Route) (err error) {
 		// When multipath is enabled build a single replace command with all of the available targets.
 		// If DropLowerWeight is also enabled then next-hops with weights less than the first operational
 		// target are not included.
-		if route.Cfg.Multipath {
+		if route.Cfg.UCMP {
 			availableNexthops := 0
 			bestWeight := 0
 

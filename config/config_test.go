@@ -37,7 +37,7 @@ func TestLoad(t *testing.T) {
 			"203.0.113.0/24": {
 				Table:           "main",
 				VRF:             "default",
-				Multipath:       true,
+				UCMP:            true,
 				DropLowerWeight: true,
 				NextHop: map[string]config.NextHop{
 					"10.0.16.1": {

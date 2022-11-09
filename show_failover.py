@@ -21,22 +21,33 @@ from datetime import datetime
 from pathlib import Path
 
 service_status = Path(f'/tmp/vyos-failover')
+bestWeight = 0
 
 
 def showRoute(route):
-    print('\troute', route['name'])
+    print('\troute', route['name'], 'vrf',
+          route['vrf'], 'table', route['table'])
     print('\t\tStatus:', ('up' if route['operational'] else 'down'))
-    print('\t\tMultipath:', ('enabled' if route['multipath'] else 'disabled'))
+    print('\t\tUCMP:', ('enabled' if route['ucmp'] else 'disabled'))
     for nexthop in route['next_hops']:
         print('')
-        showNexthop(nexthop, route['multipath'])
+        showNexthop(nexthop, route['ucmp'])
     print('')
 
 
-def showNexthop(nexthop, multipath):
+def showNexthop(nexthop, ucmp):
+    global bestWeight
+    if nexthop['operational'] and nexthop['metric'] > bestWeight:
+        bestWeight = nexthop['metric']
+
     print('\t\tnext-hop', nexthop['gateway'], 'local-address', nexthop['source'],
-          'dev', nexthop['interface'], ('weight' if multipath else 'metric'), nexthop['metric'])
-    print('\t\t\tStatus:', ('up' if nexthop['operational'] else 'down'))
+          'dev', nexthop['interface'], ('weight' if ucmp else 'metric'), nexthop['metric'])
+    status = 'down'
+    if nexthop['operational']:
+        status = 'up'
+        if ucmp and nexthop['metric'] < bestWeight:
+            status = 'up (discarded)'
+    print('\t\t\tStatus:', status)
     t = datetime.fromtimestamp(nexthop['last_change'])
     td = datetime.now()-t
     if nexthop['operational']:
@@ -45,6 +56,10 @@ def showNexthop(nexthop, multipath):
         print('\t\t\tDowntime:', duration(td))
     print('\t\t\tSuccesses:', nexthop['success_count'])
     print('\t\t\tFailures:', nexthop['fail_count'])
+
+    if not nexthop['operational'] and nexthop['check_fault'] != '':
+        print('\t\t\tFault Description:')
+        print('\t\t\t\t', nexthop['check_fault'])
 
     print('\t\t\tCheck Configuration:')
     print('\t\t\t\tType:', nexthop['check']['type'])

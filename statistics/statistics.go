@@ -12,7 +12,9 @@ type Statistics []RouteStat
 type RouteStat struct {
 	Name        string        `json:"name"`
 	Operational bool          `json:"operational"`
-	Multipath   bool          `json:"multipath"`
+	UCMP        bool          `json:"ucmp"`
+	VRF         string        `json:"vrf"`
+	Table       string        `json:"table"`
 	NextHops    []NextHopStat `json:"next_hops"`
 }
 
@@ -24,10 +26,11 @@ type NextHopStat struct {
 	SourceAddr string `json:"source"`
 	Metric     int    `json:"metric"`
 
-	Operational  bool `json:"operational"`
-	LastChange   int  `json:"last_change"`
-	FailCount    int  `json:"fail_count"`
-	SuccessCount int  `json:"success_count"`
+	Operational  bool   `json:"operational"`
+	LastChange   int    `json:"last_change"`
+	FailCount    int    `json:"fail_count"`
+	SuccessCount int    `json:"success_count"`
+	CheckFault   string `json:"check_fault"`
 
 	PacketsRecv           int             `json:"packets_recv"`
 	PacketsSent           int             `json:"packets_sent"`
@@ -44,8 +47,10 @@ func Build(routes []*decision.Route) (stats Statistics) {
 	for _, route := range routes {
 		route.RLock()
 		r := RouteStat{
-			Name:      route.Name,
-			Multipath: route.Cfg.Multipath,
+			Name:  route.Name,
+			UCMP:  route.Cfg.UCMP,
+			VRF:   route.Cfg.VRF,
+			Table: route.Cfg.Table,
 		}
 
 		var totalFailures int
@@ -64,6 +69,7 @@ func Build(routes []*decision.Route) (stats Statistics) {
 				LastChange:   int(nexthop.LastChange.Unix()),
 				SuccessCount: nexthop.SuccessCount,
 				FailCount:    nexthop.FailCount,
+				CheckFault:   nexthop.CheckFault,
 
 				Interface:  nexthop.Cfg.Interface,
 				SourceAddr: nexthop.Check.Source(),

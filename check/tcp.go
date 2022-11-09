@@ -69,23 +69,20 @@ func (t *TCPer) runLoop() (err error) {
 			return
 
 		case <-interval.C:
-			t.statsMu.Lock()
-			t.PacketsSent++
-			t.statsMu.Unlock()
 			if conn == nil {
 				conn, err = net.DialTCP("tcp", nil, t.tcpAddr)
 				if err != nil {
-					logrus.Debug("Could not connect to TCP target: ", err)
-					conn = nil
+					return
 				}
 			}
+
 			err = t.sendTCP(conn)
 			if err != nil {
 				if err != io.EOF {
-					logrus.Debug("Could not send TCP: ", err)
+					logrus.Trace("Could not send TCP: ", err)
 				}
 				conn.Close()
-				conn = nil
+				return
 			}
 		}
 	}
@@ -95,6 +92,10 @@ func (t *TCPer) sendTCP(conn *net.TCPConn) (err error) {
 	if conn == nil {
 		return
 	}
+
+	t.statsMu.Lock()
+	t.PacketsSent++
+	t.statsMu.Unlock()
 
 	var wg sync.WaitGroup
 	wg.Add(1)

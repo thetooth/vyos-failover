@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -338,13 +337,13 @@ func (p *Pinger) runLoop(
 		case r := <-recvCh:
 			err := p.processPacket(r)
 			if err != nil {
-				logrus.Error("Received packet: ", err)
+				return err
 			}
 
 		case <-interval.C:
 			err := p.sendICMP(conn)
 			if err != nil {
-				logrus.Error("Sending packet: ", err)
+				return err
 			}
 		}
 	}

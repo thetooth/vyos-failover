@@ -23,14 +23,20 @@ type Route struct {
 	lastOp   []string
 }
 
-// BuildRoutes takes in the unmarshalled configuration and initialises and sorts a list of routes for control
+// BuildRoutes takes in the unmarshalled configuration and initializes and sorts a list of routes for control
 func BuildRoutes(cfg *config.Config) (routes []*Route) {
 	for routeName, routeConfig := range cfg.Route {
+		if routeConfig.VRF == "" {
+			routeConfig.VRF = "default"
+		}
+		if routeConfig.Table == "" {
+			routeConfig.Table = "main"
+		}
 		newRoute := Route{Cfg: routeConfig, Name: routeName, RWMutex: &sync.RWMutex{}}
 
 		// Build runtime nexthops table
 		for nexthopName, nexthopConfig := range routeConfig.NextHop {
-			newNextHop := NextHop{Cfg: nexthopConfig, Name: nexthopName, LastChange: time.Now()}
+			newNextHop := NextHop{Cfg: nexthopConfig, Name: nexthopName, LastChange: time.Now(), Operational: true}
 
 			// Set up monitor
 			switch newNextHop.Cfg.Check.Kind {
@@ -41,8 +47,11 @@ func BuildRoutes(cfg *config.Config) (routes []*Route) {
 				}
 				newNextHop.Check = pinger
 				pinger.RecordRtts = false
-				// Needs privileged mode due to VyOS not allowing user mode UDP sockets
-				// pinger.SetPrivileged(true)
+				// Needs privileged mode due to VyOS not allowing user mode UDP sockets,
+				// but ICMP mode won't work if multiple checks have the same target...
+				if newNextHop.Cfg.Check.Kind == "icmp" {
+					// pinger.SetPrivileged(true)
+				}
 				pinger.Interval = newNextHop.Cfg.Check.Interval.Duration
 			case "tcp":
 				tcper, err := check.NewTCPer(newNextHop.Cfg.Check.Target)
